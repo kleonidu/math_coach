@@ -13,7 +13,14 @@ import asyncio
 TELEGRAM_TOKEN = os.environ.get('TELEGRAM_TOKEN')
 ANTHROPIC_API_KEY = os.environ.get('ANTHROPIC_API_KEY')
 
-client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
+import httpx
+
+# Создаем клиент с явными настройками
+client = anthropic.Anthropic(
+    api_key=ANTHROPIC_API_KEY,
+    max_retries=2,
+    timeout=httpx.Timeout(60.0, connect=10.0)
+)
 
 class SessionState(Enum):
     WAITING_TASK = "waiting_task"
