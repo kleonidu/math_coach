@@ -699,7 +699,6 @@ async def verify_solution(original_task, student_answer):
 async def reset_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     session = get_session(user_id)
-    session.state = SessionState.WAITING_
     session.state = SessionState.WAITING_TASK
     session.conversation = []
     
