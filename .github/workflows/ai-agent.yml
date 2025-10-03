@@ -1,7 +1,6 @@
 name: AI Agent
 
 on:
-  # ручной запуск из Actions
   workflow_dispatch:
     inputs:
       prompt:
@@ -16,18 +15,16 @@ on:
         description: "Модель Anthropic"
         required: false
         default: "claude-3-5-sonnet-20241022"
-  # автозапуск по метке на issue
   issues:
     types: [labeled]
 
 permissions:
-  contents: write        # коммиты/пуш
-  pull-requests: write   # создание PR
-  issues: write          # при желании комментить в issue
+  contents: write
+  pull-requests: write
+  issues: write
 
 jobs:
   run:
-    # запуск: вручную ИЛИ при добавлении метки "AI Agent" к issue
     if: ${{ github.event_name == 'workflow_dispatch' || (github.event_name == 'issues' && github.event.label.name == 'AI Agent') }}
     runs-on: ubuntu-latest
     env:
@@ -69,10 +66,8 @@ jobs:
             MODEL="claude-3-5-sonnet-20241022"
           fi
 
-          # сохраняем TITLE и BODY в файл промпта — надёжно для YAML/многострочности
-          printf '%s\n' "$TITLE"   > prompt.txt
-          printf '\n'             >> prompt.txt
-          printf '%s\n' "$BODY"   >> prompt.txt
+          # сохраняем многострочный промпт в файл
+          printf '%s\n\n%s\n' "$TITLE" "$BODY" > prompt.txt
 
           echo "FILES=$FILES" >> "$GITHUB_ENV"
           echo "MODEL=$MODEL" >> "$GITHUB_ENV"
@@ -99,11 +94,11 @@ jobs:
 
           echo "🎯 Модель: $MODEL"
           echo "📝 Файлы:  $FILES"
-          echo "---- PROMPT ----"
+          echo "---- PROMPT (first 40 lines) ----"
           sed -n '1,40p' prompt.txt || true
-          echo "----------------"
+          echo "---------------------------------"
 
-          # ВСЁ в одну строку, промпт подаем через подстановку из файла
+          # подаём промпт целиком из файла (в одну команду!)
           aider --yes --model "$MODEL" -m "$(cat prompt.txt)" $FILES
 
       - name: Commit and Push
@@ -113,12 +108,27 @@ jobs:
             echo "no_changes=true" >> $GITHUB_ENV
             echo "ℹ️  Изменений нет — возможно, промпт не требовал правок."
           else
-            # ограничим длину заголовка коммита первыми 72 символами первой строки prompt.txt
             TITLE_LINE=$(head -n 1 prompt.txt | cut -c1-72)
             git commit -m "AI: $TITLE_LINE"
             git push -u origin "$BRANCH"
             echo "no_changes=false" >> $GITHUB_ENV
           fi
+
+      - name: Create PR body file
+        if: env.no_changes == 'false'
+        run: |
+          EVENT="$GITHUB_EVENT_NAME"
+          ACTOR="$GITHUB_ACTOR"
+          cat > pr_body.md <<EOF
+Автогенерированный PR от AI Agent.
+
+**Модель:** $MODEL  
+**Файлы:** $FILES
+
+> Источник:  
+> • событие: $EVENT  
+> • инициатор: @$ACTOR
+EOF
 
       - name: Create Draft PR
         if: env.no_changes == 'false'
@@ -127,14 +137,7 @@ jobs:
             --base "$BASE_BRANCH" \
             --head "$BRANCH" \
             --title "AI: $(head -n 1 prompt.txt)" \
-            --body "Автогенерированный PR от AI Agent.
-
-**Модель:** $MODEL
-**Файлы:** $FILES
-
-> Источник:
-> - событие: ${{ github.event_name }}
-> - инициатор: @${{ github.actor }}" \
+            --body-file pr_body.md \
             --draft
 
       - name: Comment issue with PR link (optional)
@@ -144,4 +147,5 @@ jobs:
           gh issue comment ${{ github.event.issue.number }} --body "Открыл PR: $URL"
 
       - name: No changes note
-        if: env.no_chang_
+        if: env.no_changes == 'true'
+        run: echo "ℹ️  Aider не внёс изменений. Проверь PROMPT/FILES или переформулируй задачу."
