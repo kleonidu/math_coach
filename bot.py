@@ -773,7 +773,8 @@ def main():
     app.add_handler(CommandHandler("submit", submit_command))
     
     app.add_handler(CallbackQueryHandler(button_handler))
-    
+    app.add_handler(CommandHandler("keyboard", keyboard_command))
+app.add_handler(CallbackQueryHandler(symbol_callback))
     app.add_handler(MessageHandler(filters.PHOTO, handle_photo))
     
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
@@ -787,4 +788,57 @@ def main():
     app.run_polling(allowed_updates=Update.ALL_TYPES)
 
 if __name__ == '__main__':
+    # Математическая клавиатура
+MATH_SYMBOLS = {
+    'basic': ['√', '²', '³', '∫', 'π', '±', '÷', '×'],
+    'greek': ['α', 'β', 'γ', 'δ', 'θ', 'λ', 'μ', 'σ'],
+    'calculus': ['∑', '∏', '∂', '∇', '∞', '≈', '≠', '≤', '≥'],
+    'geometry': ['∠', '°', '⊥', '∥', '△', '□', '○']
+}
+
+async def keyboard_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    keyboard = [
+        [InlineKeyboardButton("Базовые", callback_data='cat_basic'),
+         InlineKeyboardButton("Греческие", callback_data='cat_greek')],
+        [InlineKeyboardButton("Матанализ", callback_data='cat_calculus'),
+         InlineKeyboardButton("Геометрия", callback_data='cat_geometry')]
+    ]
+    reply_markup = InlineKeyboardMarkup(keyboard)
+    await update.message.reply_text('Выбери категорию символов:', reply_markup=reply_markup)
+
+async def symbol_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    
+    data = query.data
+    
+    if data.startswith('cat_'):
+        category = data.replace('cat_', '')
+        symbols = MATH_SYMBOLS.get(category, [])
+        
+        keyboard = []
+        row = []
+        for i, symbol in enumerate(symbols):
+            row.append(InlineKeyboardButton(symbol, callback_data=f'sym_{symbol}'))
+            if len(row) == 4 or i == len(symbols) - 1:
+                keyboard.append(row)
+                row = []
+        
+        keyboard.append([InlineKeyboardButton("« Назад", callback_data='back_menu')])
+        reply_markup = InlineKeyboardMarkup(keyboard)
+        await query.edit_message_text(f'Символы ({category}):', reply_markup=reply_markup)
+    
+    elif data.startswith('sym_'):
+        symbol = data.replace('sym_', '')
+        await query.edit_message_text(f'Скопируй символ: {symbol}')
+    
+    elif data == 'back_menu':
+        keyboard = [
+            [InlineKeyboardButton("Базовые", callback_data='cat_basic'),
+             InlineKeyboardButton("Греческие", callback_data='cat_greek')],
+            [InlineKeyboardButton("Матанализ", callback_data='cat_calculus'),
+             InlineKeyboardButton("Геометрия", callback_data='cat_geometry')]
+        ]
+        reply_markup = InlineKeyboardMarkup(keyboard)
+        await query.edit_message_text('Выбери категорию:', reply_markup=reply_markup)
     main()
