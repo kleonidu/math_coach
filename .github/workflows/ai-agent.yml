@@ -69,18 +69,15 @@ jobs:
             MODEL="claude-3-5-sonnet-20241022"
           fi
 
-          # TITLE может быть многострочным — пишем как многострочную env-переменную
-          echo "TITLE<<EOF" >> "$GITHUB_ENV"
-          echo "$TITLE"     >> "$GITHUB_ENV"
-          echo "EOF"        >> "$GITHUB_ENV"
-
-          # BODY (многострочный) кладём в файл, чтобы не ломать YAML
-          printf '%s\n' "$BODY" > prompt_body.txt
+          # сохраняем TITLE и BODY в файл промпта — надёжно для YAML/многострочности
+          printf '%s\n' "$TITLE"   > prompt.txt
+          printf '\n'             >> prompt.txt
+          printf '%s\n' "$BODY"   >> prompt.txt
 
           echo "FILES=$FILES" >> "$GITHUB_ENV"
           echo "MODEL=$MODEL" >> "$GITHUB_ENV"
 
-          # Определяем дефолтную ветку репозитория
+          # дефолтная ветка
           BASE=$(gh repo view --json defaultBranchRef --jq .defaultBranchRef.name)
           echo "BASE_BRANCH=$BASE" >> "$GITHUB_ENV"
 
@@ -102,19 +99,12 @@ jobs:
 
           echo "🎯 Модель: $MODEL"
           echo "📝 Файлы:  $FILES"
-          echo "🗒️  Заголовок: $TITLE"
-
-          # Собираем единый многострочный промпт
-          PROMPT="$TITLE
-
-$(cat prompt_body.txt)"
-
           echo "---- PROMPT ----"
-          echo "$PROMPT"
+          sed -n '1,40p' prompt.txt || true
           echo "----------------"
 
-          # ВАЖНО: вся команда в одну строку, без разрывов YAML
-          aider --yes --model "$MODEL" -m "$PROMPT" $FILES
+          # ВСЁ в одну строку, промпт подаем через подстановку из файла
+          aider --yes --model "$MODEL" -m "$(cat prompt.txt)" $FILES
 
       - name: Commit and Push
         run: |
@@ -123,7 +113,9 @@ $(cat prompt_body.txt)"
             echo "no_changes=true" >> $GITHUB_ENV
             echo "ℹ️  Изменений нет — возможно, промпт не требовал правок."
           else
-            git commit -m "AI: $TITLE"
+            # ограничим длину заголовка коммита первыми 72 символами первой строки prompt.txt
+            TITLE_LINE=$(head -n 1 prompt.txt | cut -c1-72)
+            git commit -m "AI: $TITLE_LINE"
             git push -u origin "$BRANCH"
             echo "no_changes=false" >> $GITHUB_ENV
           fi
@@ -134,7 +126,7 @@ $(cat prompt_body.txt)"
           gh pr create \
             --base "$BASE_BRANCH" \
             --head "$BRANCH" \
-            --title "AI: ${TITLE}" \
+            --title "AI: $(head -n 1 prompt.txt)" \
             --body "Автогенерированный PR от AI Agent.
 
 **Модель:** $MODEL
@@ -152,5 +144,4 @@ $(cat prompt_body.txt)"
           gh issue comment ${{ github.event.issue.number }} --body "Открыл PR: $URL"
 
       - name: No changes note
-        if: env.no_changes == 'true'
-        run: echo "ℹ️  Aider не внёс изменений. Проверь PROMPT/FILES или переформулируй задачу."
+        if: env.no_chang_
