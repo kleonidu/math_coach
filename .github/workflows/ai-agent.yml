@@ -23,15 +23,14 @@ on:
 permissions:
   contents: write        # коммиты/пуш
   pull-requests: write   # создание PR
-  issues: write          # при желании можно комментить в issue
+  issues: write          # при желании комментить в issue
 
 jobs:
   run:
-    # если событие — пометка issue, то только при метке AI Agent; либо всегда при workflow_dispatch
+    # запуск: вручную ИЛИ при добавлении метки "AI Agent" к issue
     if: ${{ github.event_name == 'workflow_dispatch' || (github.event_name == 'issues' && github.event.label.name == 'AI Agent') }}
     runs-on: ubuntu-latest
     env:
-      # GH CLI использует этот токен
       GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
@@ -54,7 +53,7 @@ jobs:
           git config user.name  "ai-agent[bot]"
           git config user.email "ai-agent-bot@users.noreply.github.com"
 
-      - name: Prepare inputs
+      - name: Prepare inputs (title/body/files/model + default branch)
         id: prep
         shell: bash
         run: |
@@ -70,24 +69,27 @@ jobs:
             MODEL="claude-3-5-sonnet-20241022"
           fi
 
-          # пишем многострочные значения корректно
-          {
-            echo "TITLE<<'EOF'"
-            echo "$TITLE"
-            echo "EOF"
-            echo "BODY<<'EOF'"
-            echo "$BODY"
-            echo "EOF"
-            echo "FILES=$FILES"
-            echo "MODEL=$MODEL"
-          } >> "$GITHUB_ENV"
+          # TITLE может быть многострочным — пишем как многострочную env-переменную
+          echo "TITLE<<EOF" >> "$GITHUB_ENV"
+          echo "$TITLE"     >> "$GITHUB_ENV"
+          echo "EOF"        >> "$GITHUB_ENV"
+
+          # BODY (многострочный) кладём в файл, чтобы не ломать YAML
+          printf '%s\n' "$BODY" > prompt_body.txt
+
+          echo "FILES=$FILES" >> "$GITHUB_ENV"
+          echo "MODEL=$MODEL" >> "$GITHUB_ENV"
+
+          # Определяем дефолтную ветку репозитория
+          BASE=$(gh repo view --json defaultBranchRef --jq .defaultBranchRef.name)
+          echo "BASE_BRANCH=$BASE" >> "$GITHUB_ENV"
 
       - name: Create branch
         id: branch
         run: |
           BRANCH="ai-agent/${{ github.run_id }}-${{ github.run_attempt }}"
-          echo "BRANCH=$BRANCH" >> $GITHUB_ENV
           git checkout -b "$BRANCH"
+          echo "BRANCH=$BRANCH" >> "$GITHUB_ENV"
 
       - name: Run Aider (apply fixes)
         env:
@@ -102,18 +104,24 @@ jobs:
           echo "📝 Файлы:  $FILES"
           echo "🗒️  Заголовок: $TITLE"
 
-          # Aider: единичное сообщение -m, редактируем перечисленные файлы
-          # BODY может быть многострочным — берём как есть.
-          aider --yes --model "$MODEL" -m "$TITLE
+          # Собираем единый многострочный промпт
+          PROMPT="$TITLE
 
-$BODY" $FILES
+$(cat prompt_body.txt)"
+
+          echo "---- PROMPT ----"
+          echo "$PROMPT"
+          echo "----------------"
+
+          # ВАЖНО: вся команда в одну строку, без разрывов YAML
+          aider --yes --model "$MODEL" -m "$PROMPT" $FILES
 
       - name: Commit and Push
         run: |
           git add -A
           if git diff --staged --quiet; then
             echo "no_changes=true" >> $GITHUB_ENV
-            echo "⚠️  Изменений нет — возможно, промпт не требовал правок."
+            echo "ℹ️  Изменений нет — возможно, промпт не требовал правок."
           else
             git commit -m "AI: $TITLE"
             git push -u origin "$BRANCH"
@@ -123,9 +131,8 @@ $BODY" $FILES
       - name: Create Draft PR
         if: env.no_changes == 'false'
         run: |
-          # gh CLI уже установлен на runner'ах
           gh pr create \
-            --base "${{ github.event.repository.default_branch }}" \
+            --base "$BASE_BRANCH" \
             --head "$BRANCH" \
             --title "AI: ${TITLE}" \
             --body "Автогенерированный PR от AI Agent.
@@ -138,7 +145,7 @@ $BODY" $FILES
 > - инициатор: @${{ github.actor }}" \
             --draft
 
-      - name: Comment issue (optional)
+      - name: Comment issue with PR link (optional)
         if: ${{ github.event_name == 'issues' && env.no_changes == 'false' }}
         run: |
           URL=$(gh pr list --head "$BRANCH" --json url --jq '.[0].url')
