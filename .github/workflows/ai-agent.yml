@@ -98,7 +98,7 @@ jobs:
           sed -n '1,40p' prompt.txt || true
           echo "---------------------------------"
 
-          # подаём промпт целиком из файла (в одну команду!)
+          # передаём промпт целиком из файла (команда одной строкой)
           aider --yes --model "$MODEL" -m "$(cat prompt.txt)" $FILES
 
       - name: Commit and Push
@@ -114,21 +114,21 @@ jobs:
             echo "no_changes=false" >> $GITHUB_ENV
           fi
 
-      - name: Create PR body file
+      - name: Create PR body file (safe, no heredoc)
         if: env.no_changes == 'false'
         run: |
           EVENT="$GITHUB_EVENT_NAME"
           ACTOR="$GITHUB_ACTOR"
-          cat > pr_body.md <<EOF
-Автогенерированный PR от AI Agent.
-
-**Модель:** $MODEL  
-**Файлы:** $FILES
-
-> Источник:  
-> • событие: $EVENT  
-> • инициатор: @$ACTOR
-EOF
+          {
+            echo "Автогенерированный PR от AI Agent."
+            echo
+            echo "**Модель:** $MODEL  "
+            echo "**Файлы:** $FILES"
+            echo
+            echo "> Источник:"
+            echo "> • событие: $EVENT"
+            echo "> • инициатор: @$ACTOR"
+          } > pr_body.md
 
       - name: Create Draft PR
         if: env.no_changes == 'false'
