@@ -646,4 +646,4 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await update.message.chat.send_action("typing")
             await asyncio.sleep(1)
             
-            meme_emoji = "🎭" if new_score >= 80 else "😄" if new_score >= 60 else "
+            meme_emoji = "🎭" if new_score >= 80 else "😄" if new_score >= 60 else ""
