@@ -1,49 +1,149 @@
 name: AI Agent
 
 on:
+  # ручной запуск из Actions
+  workflow_dispatch:
+    inputs:
+      prompt:
+        description: "Инструкция для агента (если запускаешь вручную)"
+        required: true
+        default: "Почини баг(и) и улучши код по описанию"
+      files:
+        description: "Какие файлы редактировать (через пробел)"
+        required: false
+        default: "bot.py"
+      model:
+        description: "Модель Anthropic"
+        required: false
+        default: "claude-3-5-sonnet-20241022"
+  # автозапуск по метке на issue
   issues:
     types: [labeled]
 
 permissions:
-  contents: write
-  pull-requests: write
-  issues: write
+  contents: write        # коммиты/пуш
+  pull-requests: write   # создание PR
+  issues: write          # при желании можно комментить в issue
 
 jobs:
-  ai-task:
-    if: github.event.label.name == 'ai-task'
+  run:
+    # если событие — пометка issue, то только при метке AI Agent; либо всегда при workflow_dispatch
+    if: ${{ github.event_name == 'workflow_dispatch' || (github.event_name == 'issues' && github.event.label.name == 'AI Agent') }}
     runs-on: ubuntu-latest
-    
+    env:
+      # GH CLI использует этот токен
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
     steps:
-      - uses: actions/checkout@v4
-      
-      - uses: actions/setup-python@v5
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
         with:
           python-version: '3.11'
-      
-      - name: Install
-        run: pip install aider-chat
-      
-      - name: Git Config
+
+      - name: Install Aider
         run: |
-          git config user.name "AI"
-          git config user.email "ai@bot.com"
-          git checkout -b ai-${{ github.event.issue.number }}
-      
-      - name: Aider
+          python -m pip install --upgrade pip
+          pip install "aider-chat>=0.60.0"
+
+      - name: Git identity
+        run: |
+          git config user.name  "ai-agent[bot]"
+          git config user.email "ai-agent-bot@users.noreply.github.com"
+
+      - name: Prepare inputs
+        id: prep
+        shell: bash
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            TITLE="Manual run"
+            BODY="${{ inputs.prompt }}"
+            FILES="${{ inputs.files }}"
+            MODEL="${{ inputs.model }}"
+          else
+            TITLE="${{ github.event.issue.title }}"
+            BODY="${{ github.event.issue.body }}"
+            FILES="bot.py"
+            MODEL="claude-3-5-sonnet-20241022"
+          fi
+
+          # пишем многострочные значения корректно
+          {
+            echo "TITLE<<'EOF'"
+            echo "$TITLE"
+            echo "EOF"
+            echo "BODY<<'EOF'"
+            echo "$BODY"
+            echo "EOF"
+            echo "FILES=$FILES"
+            echo "MODEL=$MODEL"
+          } >> "$GITHUB_ENV"
+
+      - name: Create branch
+        id: branch
+        run: |
+          BRANCH="ai-agent/${{ github.run_id }}-${{ github.run_attempt }}"
+          echo "BRANCH=$BRANCH" >> $GITHUB_ENV
+          git checkout -b "$BRANCH"
+
+      - name: Run Aider (apply fixes)
         env:
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
         run: |
-          echo "${{ github.event.issue.body }}" | aider --yes --model claude-3-5-sonnet-20241022 --message "${{ github.event.issue.title }}" bot.py
-      
-      - name: Commit
+          if [ -z "$ANTHROPIC_API_KEY" ]; then
+            echo "❌ Нет ANTHROPIC_API_KEY в Secrets. Останавливаюсь."
+            exit 1
+          fi
+
+          echo "🎯 Модель: $MODEL"
+          echo "📝 Файлы:  $FILES"
+          echo "🗒️  Заголовок: $TITLE"
+
+          # Aider: единичное сообщение -m, редактируем перечисленные файлы
+          # BODY может быть многострочным — берём как есть.
+          aider --yes --model "$MODEL" -m "$TITLE
+
+$BODY" $FILES
+
+      - name: Commit and Push
         run: |
           git add -A
-          git commit -m "AI: ${{ github.event.issue.title }}" || echo "No changes"
-          git push origin ai-${{ github.event.issue.number }} || echo "Push failed"
-      
-      - name: PR
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          if git diff --staged --quiet; then
+            echo "no_changes=true" >> $GITHUB_ENV
+            echo "⚠️  Изменений нет — возможно, промпт не требовал правок."
+          else
+            git commit -m "AI: $TITLE"
+            git push -u origin "$BRANCH"
+            echo "no_changes=false" >> $GITHUB_ENV
+          fi
+
+      - name: Create Draft PR
+        if: env.no_changes == 'false'
         run: |
-          gh pr create --title "AI: ${{ github.event.issue.title }}" --body "Fixes #${{ github.event.issue.number }}" --base main --head ai-${{ github.event.issue.number }} || echo "PR exists"
+          # gh CLI уже установлен на runner'ах
+          gh pr create \
+            --base "${{ github.event.repository.default_branch }}" \
+            --head "$BRANCH" \
+            --title "AI: ${TITLE}" \
+            --body "Автогенерированный PR от AI Agent.
+
+**Модель:** $MODEL
+**Файлы:** $FILES
+
+> Источник:
+> - событие: ${{ github.event_name }}
+> - инициатор: @${{ github.actor }}" \
+            --draft
+
+      - name: Comment issue (optional)
+        if: ${{ github.event_name == 'issues' && env.no_changes == 'false' }}
+        run: |
+          URL=$(gh pr list --head "$BRANCH" --json url --jq '.[0].url')
+          gh issue comment ${{ github.event.issue.number }} --body "Открыл PR: $URL"
+
+      - name: No changes note
+        if: env.no_changes == 'true'
+        run: echo "ℹ️  Aider не внёс изменений. Проверь PROMPT/FILES или переформулируй задачу."
