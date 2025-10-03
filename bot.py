@@ -104,6 +104,14 @@ MEME_GENERATION_PROMPT = """Создай веселый мем-текст для
 
 Формат ответа - только текст мема, без пояснений."""
 
+# Математическая клавиатура
+MATH_SYMBOLS = {
+    'basic': ['√', '²', '³', '∫', 'π', '±', '÷', '×'],
+    'greek': ['α', 'β', 'γ', 'δ', 'θ', 'λ', 'μ', 'σ'],
+    'calculus': ['∑', '∏', '∂', '∇', '∞', '≈', '≠', '≤', '≥'],
+    'geometry': ['∠', '°', '⊥', '∥', '△', '□', '○']
+}
+
 class UserSession:
     def __init__(self, user_id):
         self.user_id = user_id
@@ -165,6 +173,43 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     session = get_session(user_id)
     
+    # Обработка математических символов
+    data = query.data
+    
+    if data.startswith('cat_'):
+        category = data.replace('cat_', '')
+        symbols = MATH_SYMBOLS.get(category, [])
+        
+        keyboard = []
+        row = []
+        for i, symbol in enumerate(symbols):
+            row.append(InlineKeyboardButton(symbol, callback_data=f'sym_{symbol}'))
+            if len(row) == 4 or i == len(symbols) - 1:
+                keyboard.append(row)
+                row = []
+        
+        keyboard.append([InlineKeyboardButton("« Назад", callback_data='back_menu')])
+        reply_markup = InlineKeyboardMarkup(keyboard)
+        await query.edit_message_text(f'Символы ({category}):', reply_markup=reply_markup)
+        return
+    
+    elif data.startswith('sym_'):
+        symbol = data.replace('sym_', '')
+        await query.edit_message_text(f'Скопируй символ: {symbol}')
+        return
+    
+    elif data == 'back_menu':
+        keyboard = [
+            [InlineKeyboardButton("Базовые", callback_data='cat_basic'),
+             InlineKeyboardButton("Греческие", callback_data='cat_greek')],
+            [InlineKeyboardButton("Матанализ", callback_data='cat_calculus'),
+             InlineKeyboardButton("Геометрия", callback_data='cat_geometry')]
+        ]
+        reply_markup = InlineKeyboardMarkup(keyboard)
+        await query.edit_message_text('Выбери категорию:', reply_markup=reply_markup)
+        return
+    
+    # Остальная обработка кнопок
     if query.data == "start_solving":
         session.state = SessionState.WAITING_TASK
         await query.edit_message_text(
@@ -347,6 +392,7 @@ async def show_help(query):
 /hint - попросить подсказку
 /submit - сдать финальный ответ
 /stats - посмотреть статистику
+/keyboard - математические символы
 
 🎓 РЕЖИМ ЭКЗАМЕНА:
 Ограниченное количество подсказок
@@ -357,6 +403,16 @@ async def show_help(query):
     
     keyboard = [[InlineKeyboardButton("🔙 Назад", callback_data="start_solving")]]
     await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(keyboard))
+
+async def keyboard_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    keyboard = [
+        [InlineKeyboardButton("Базовые", callback_data='cat_basic'),
+         InlineKeyboardButton("Греческие", callback_data='cat_greek')],
+        [InlineKeyboardButton("Матанализ", callback_data='cat_calculus'),
+         InlineKeyboardButton("Геометрия", callback_data='cat_geometry')]
+    ]
+    reply_markup = InlineKeyboardMarkup(keyboard)
+    await update.message.reply_text('Выбери категорию символов:', reply_markup=reply_markup)
 
 async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
@@ -590,255 +646,4 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await update.message.chat.send_action("typing")
             await asyncio.sleep(1)
             
-            meme_emoji = "🎭" if new_score >= 80 else "😄" if new_score >= 60 else "🙃"
-            await update.message.reply_text(
-                f"{meme_emoji} ТВОЯ НАГРАДА:\n\n"
-                f"<b>{meme_text}</b>",
-                parse_mode='HTML'
-            )
-
-async def get_ai_response(session, system_prompt):
-    try:
-        message = client.messages.create(
-            model="claude-sonnet-4-20250514",
-            max_tokens=1500,
-            system=system_prompt,
-            messages=session.conversation
-        )
-        
-        response = message.content[0].text
-        
-        session.conversation.append({
-            "role": "assistant",
-            "content": response
-        })
-        
-        return response
-    except Exception as e:
-        return f"❌ Ошибка: {str(e)}"
-
-async def generate_meme_text(score, task_preview, difficulty):
-    try:
-        task_lower = task_preview.lower()
-        if "уравнение" in task_lower or "реши" in task_lower:
-            task_type = "уравнение"
-        elif "производная" in task_lower or "интеграл" in task_lower:
-            task_type = "матан"
-        elif "упрости" in task_lower:
-            task_type = "упрощение"
-        elif "геометр" in task_lower:
-            task_type = "геометрия"
-        else:
-            task_type = "задача"
-        
-        prompt = MEME_GENERATION_PROMPT.format(
-            score=score,
-            task_type=task_type,
-            difficulty=difficulty
-        )
-        
-        message = client.messages.create(
-            model="claude-sonnet-4-20250514",
-            max_tokens=200,
-            messages=[{
-                "role": "user",
-                "content": prompt
-            }]
-        )
-        
-        meme_text = message.content[0].text.strip()
-        return meme_text
-        
-    except Exception as e:
-        import random
-        fallback_memes = [
-            "POV: Ты только что решил задачу без калькулятора 💪",
-            "Математика: defeated ✅\nСледующая задача: loading... ⏳",
-            "Когда наконец понял, как решать: character development unlocked 🔓",
-            "Brain.exe перестал зависать. Респект! 🧠",
-            "Ты: 1, Задача: 0. GG WP! 🎮"
-        ]
-        return random.choice(fallback_memes)
-
-async def verify_solution(original_task, student_answer):
-    try:
-        prompt = VERIFICATION_PROMPT.format(
-            original_task=original_task,
-            student_answer=student_answer
-        )
-        
-        message = client.messages.create(
-            model="claude-sonnet-4-20250514",
-            max_tokens=2000,
-            messages=[{
-                "role": "user",
-                "content": prompt
-            }]
-        )
-        
-        response_text = message.content[0].text
-        
-        start = response_text.find('{')
-        end = response_text.rfind('}') + 1
-        if start != -1 and end > start:
-            json_str = response_text[start:end]
-            result = json.loads(json_str)
-            return result
-        else:
-            return {
-                "correct": False,
-                "final_answer": "Не удалось проверить",
-                "score": 50,
-                "feedback": response_text,
-                "mistakes": [],
-                "strengths": []
-            }
-    except Exception as e:
-        return {
-            "correct": False,
-            "final_answer": "Ошибка проверки",
-            "score": 0,
-            "feedback": f"Произошла ошибка: {str(e)}",
-            "mistakes": [],
-            "strengths": []
-        }
-
-async def reset_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_id = update.effective_user.id
-    session = get_session(user_id)
-    session.state = SessionState.WAITING_TASK
-    session.conversation = []
-    
-    await update.message.reply_text(
-        "🔄 Сессия сброшена. Отправь новую задачу!"
-    )
-
-async def stats_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_id = update.effective_user.id
-    session = get_session(user_id)
-    
-    stats = session.stats
-    
-    if stats["total_tasks"] == 0:
-        text = "📊 Статистика пока пуста.\n\nРеши несколько задач!"
-    else:
-        text = f"""📊 ТВОЯ СТАТИСТИКА
-
-✅ Решено: {stats['completed_tasks']}/{stats['total_tasks']}
-⭐ Средний балл: {stats['average_score']:.1f}/100
-💡 Подсказок: {stats['total_hints']}"""
-    
-    await update.message.reply_text(text)
-
-async def hint_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_id = update.effective_user.id
-    session = get_session(user_id)
-    
-    if session.state != SessionState.SOLVING:
-        await update.message.reply_text("Сначала начни решать задачу!")
-        return
-    
-    session.stats["total_hints"] += 1
-    
-    session.conversation.append({
-        "role": "user",
-        "content": "Мне нужна подсказка. Дай небольшую подсказку, но не решение."
-    })
-    
-    await update.message.chat.send_action("typing")
-    response = await get_ai_response(session, SYSTEM_PROMPT)
-    
-    await update.message.reply_text(f"💡 {response}")
-
-async def submit_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_id = update.effective_user.id
-    session = get_session(user_id)
-    
-    if session.state != SessionState.SOLVING:
-        await update.message.reply_text("Сначала начни решать задачу!")
-        return
-    
-    session.state = SessionState.FINAL_ANSWER
-    await update.message.reply_text(
-        "✍️ Отлично! Напиши свой ФИНАЛЬНЫЙ ОТВЕТ с решением."
-    )
-
-def main():
-    app = Application.builder().token(TELEGRAM_TOKEN).build()
-    
-    app.add_handler(CommandHandler("start", start))
-    app.add_handler(CommandHandler("reset", reset_command))
-    app.add_handler(CommandHandler("stats", stats_command))
-    app.add_handler(CommandHandler("hint", hint_command))
-    app.add_handler(CommandHandler("submit", submit_command))
-    
-    app.add_handler(CallbackQueryHandler(button_handler))
-    app.add_handler(CommandHandler("keyboard", keyboard_command))
-app.add_handler(CallbackQueryHandler(symbol_callback))
-    app.add_handler(MessageHandler(filters.PHOTO, handle_photo))
-    
-    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
-    
-    print("🤖 Продвинутый математический бот запущен!")
-    print("📊 Включены: статистика, проверка решений, режим экзамена")
-    print("📸 Распознавание задач с фото активировано!")
-    print("🎭 Генерация мемов включена!")
-    print("Нажмите Ctrl+C для остановки")
-    
-    app.run_polling(allowed_updates=Update.ALL_TYPES)
-
-if __name__ == '__main__':
-    # Математическая клавиатура
-MATH_SYMBOLS = {
-    'basic': ['√', '²', '³', '∫', 'π', '±', '÷', '×'],
-    'greek': ['α', 'β', 'γ', 'δ', 'θ', 'λ', 'μ', 'σ'],
-    'calculus': ['∑', '∏', '∂', '∇', '∞', '≈', '≠', '≤', '≥'],
-    'geometry': ['∠', '°', '⊥', '∥', '△', '□', '○']
-}
-
-async def keyboard_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    keyboard = [
-        [InlineKeyboardButton("Базовые", callback_data='cat_basic'),
-         InlineKeyboardButton("Греческие", callback_data='cat_greek')],
-        [InlineKeyboardButton("Матанализ", callback_data='cat_calculus'),
-         InlineKeyboardButton("Геометрия", callback_data='cat_geometry')]
-    ]
-    reply_markup = InlineKeyboardMarkup(keyboard)
-    await update.message.reply_text('Выбери категорию символов:', reply_markup=reply_markup)
-
-async def symbol_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
-    await query.answer()
-    
-    data = query.data
-    
-    if data.startswith('cat_'):
-        category = data.replace('cat_', '')
-        symbols = MATH_SYMBOLS.get(category, [])
-        
-        keyboard = []
-        row = []
-        for i, symbol in enumerate(symbols):
-            row.append(InlineKeyboardButton(symbol, callback_data=f'sym_{symbol}'))
-            if len(row) == 4 or i == len(symbols) - 1:
-                keyboard.append(row)
-                row = []
-        
-        keyboard.append([InlineKeyboardButton("« Назад", callback_data='back_menu')])
-        reply_markup = InlineKeyboardMarkup(keyboard)
-        await query.edit_message_text(f'Символы ({category}):', reply_markup=reply_markup)
-    
-    elif data.startswith('sym_'):
-        symbol = data.replace('sym_', '')
-        await query.edit_message_text(f'Скопируй символ: {symbol}')
-    
-    elif data == 'back_menu':
-        keyboard = [
-            [InlineKeyboardButton("Базовые", callback_data='cat_basic'),
-             InlineKeyboardButton("Греческие", callback_data='cat_greek')],
-            [InlineKeyboardButton("Матанализ", callback_data='cat_calculus'),
-             InlineKeyboardButton("Геометрия", callback_data='cat_geometry')]
-        ]
-        reply_markup = InlineKeyboardMarkup(keyboard)
-        await query.edit_message_text('Выбери категорию:', reply_markup=reply_markup)
-    main()
+            meme_emoji = "🎭" if new_score >= 80 else "😄" if new_score >= 60 else "
