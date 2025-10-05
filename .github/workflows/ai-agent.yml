@@ -25,6 +25,7 @@ permissions:
 
 jobs:
   run:
+    # запуск: вручную ИЛИ при добавлении метки "AI Agent" к issue
     if: ${{ github.event_name == 'workflow_dispatch' || (github.event_name == 'issues' && github.event.label.name == 'AI Agent') }}
     runs-on: ubuntu-latest
     env:
@@ -40,10 +41,11 @@ jobs:
         with:
           python-version: '3.11'
 
-      - name: Install Aider
+      # ✅ устойчивый установщик aider
+      - name: Install Aider (stable)
         run: |
-          python -m pip install --upgrade pip
-          pip install "aider-chat>=0.60.0"
+          python -m pip install --upgrade pip wheel setuptools
+          pip install "aider-chat==0.60.1"
 
       - name: Git identity
         run: |
@@ -66,13 +68,13 @@ jobs:
             MODEL="claude-3-5-sonnet-20241022"
           fi
 
-          # сохраняем многострочный промпт в файл
+          # сохраняем многострочный промпт в файл (без heredoc)
           printf '%s\n\n%s\n' "$TITLE" "$BODY" > prompt.txt
 
           echo "FILES=$FILES" >> "$GITHUB_ENV"
           echo "MODEL=$MODEL" >> "$GITHUB_ENV"
 
-          # дефолтная ветка
+          # дефолтная ветка репозитория
           BASE=$(gh repo view --json defaultBranchRef --jq .defaultBranchRef.name)
           echo "BASE_BRANCH=$BASE" >> "$GITHUB_ENV"
 
@@ -106,7 +108,7 @@ jobs:
           git add -A
           if git diff --staged --quiet; then
             echo "no_changes=true" >> $GITHUB_ENV
-            echo "ℹ️  Изменений нет — возможно, промпт не требовал правок."
+            echo "ℹ️  Aider не внёс изменений — возможно, промпт не требовал правок."
           else
             TITLE_LINE=$(head -n 1 prompt.txt | cut -c1-72)
             git commit -m "AI: $TITLE_LINE"
@@ -114,7 +116,7 @@ jobs:
             echo "no_changes=false" >> $GITHUB_ENV
           fi
 
-      - name: Create PR body file (safe, no heredoc)
+      - name: Create PR body file (safe)
         if: env.no_changes == 'false'
         run: |
           EVENT="$GITHUB_EVENT_NAME"
@@ -148,4 +150,4 @@ jobs:
 
       - name: No changes note
         if: env.no_changes == 'true'
-        run: echo "ℹ️  Aider не внёс изменений. Проверь PROMPT/FILES или переформулируй задачу."
+        run: echo "ℹ️  Изменений нет — проверь PROMPT/FILES или переформулируй задачу."
