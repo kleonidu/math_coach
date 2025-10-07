@@ -5,6 +5,8 @@ Safe QA+Dev Agent runner.
 - creates a Draft PR with reports/suggestions.md
 - prints detailed logs for Actions
 """
+from __future__ import annotations
+
 import os
 import sys
 import json
@@ -12,8 +14,14 @@ import time
 import base64
 import argparse
 from pathlib import Path
+from typing import Union
 import requests
 import yaml
+
+BASE_DIR = Path(__file__).resolve().parent
+DEFAULT_PLAN_PATH = BASE_DIR / "tests" / "plan_smoke.yaml"
+REPORTS_DIR = BASE_DIR / "reports"
+DEFAULT_PROMPT_PATH = BASE_DIR / "prompts" / "bot_system.md"
 
 # Optional: try to import Anthropic (if available in env)
 try:
@@ -25,23 +33,29 @@ except Exception:
 REPO = os.environ.get("GITHUB_REPO") or os.environ.get("GITHUB_REPOSITORY")
 GITHUB_TOKEN = os.environ.get("GITHUB_TOKEN")
 ANTHROPIC_KEY = os.environ.get("ANTHROPIC_API_KEY")
-BOT_PROMPT_PATH = os.environ.get("BOT_SYSTEM_PROMPT_PATH", "prompts/bot_system.md")
+
+prompt_override = os.environ.get("BOT_SYSTEM_PROMPT_PATH")
+if prompt_override:
+    BOT_PROMPT_PATH = Path(prompt_override)
+else:
+    BOT_PROMPT_PATH = DEFAULT_PROMPT_PATH
 
 API_GH = "https://api.github.com"
 
 def log(*args, **kwargs):
     print(*args, **kwargs, flush=True)
 
-def read_yaml(path: str):
+def read_yaml(path: Union[str, Path]):
     p = Path(path)
     if not p.exists():
         return {}
     return yaml.safe_load(p.read_text(encoding="utf-8"))
 
-def run_stub_plan(plan_path: str):
+def run_stub_plan(plan_path: Union[str, Path]):
     """Simple stub runner that loads YAML and produces a fake report."""
     plan = read_yaml(plan_path)
-    name = plan.get("name", Path(plan_path).stem)
+    plan_path = Path(plan_path)
+    name = plan.get("name", plan_path.stem)
     steps = plan.get("steps", [])
     results = {"plan": name, "cases": [], "passed": 0, "failed": 0}
     for i, s in enumerate(steps, start=1):
@@ -97,10 +111,10 @@ def save_report_and_create_pr(report: dict, branch_name: str, apply_patches: boo
     """
     if not GITHUB_TOKEN:
         log("No GITHUB_TOKEN set — skipping PR creation. Saving local report.")
-        out = Path("reports/").resolve()
-        out.mkdir(parents=True, exist_ok=True)
-        Path("reports/suggestions.md").write_text(json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8")
-        return {"pr": None, "saved": str(out / "suggestions.md")}
+        REPORTS_DIR.mkdir(parents=True, exist_ok=True)
+        suggestions_path = REPORTS_DIR / "suggestions.md"
+        suggestions_path.write_text(json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8")
+        return {"pr": None, "saved": str(suggestions_path)}
 
     # create branch from default (use refs API)
     headers = {"Authorization": f"Bearer {GITHUB_TOKEN}", "Accept": "application/vnd.github+json"}
@@ -136,7 +150,8 @@ def save_report_and_create_pr(report: dict, branch_name: str, apply_patches: boo
         "content": encoded,
         "branch": branch_name,
     }
-    r = requests.put(f"{API_GH}/repos/{repo}/contents/reports/suggestions.md", headers=headers, json=put_payload)
+    remote_path = "ai_agent/reports/suggestions.md"
+    r = requests.put(f"{API_GH}/repos/{repo}/contents/{remote_path}", headers=headers, json=put_payload)
     if r.status_code not in (200, 201):
         log("Failed to create file in branch:", r.status_code, r.text)
     else:
@@ -160,7 +175,7 @@ def save_report_and_create_pr(report: dict, branch_name: str, apply_patches: boo
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--plan", default="tests/plan_smoke.yaml")
+    parser.add_argument("--plan", default=str(DEFAULT_PLAN_PATH))
     parser.add_argument("--apply", action="store_true")
     parser.add_argument("--autodeploy", action="store_true")
     args = parser.parse_args()
@@ -173,12 +188,12 @@ def main():
     log("GITHUB_TOKEN present:", bool(GITHUB_TOKEN))
 
     # Ensure reports dir exists
-    Path("reports").mkdir(parents=True, exist_ok=True)
+    REPORTS_DIR.mkdir(parents=True, exist_ok=True)
 
     # load bot system prompt if exists
     sys_prompt = ""
-    if Path(BOT_PROMPT_PATH).exists():
-        sys_prompt = Path(BOT_PROMPT_PATH).read_text(encoding="utf-8")
+    if BOT_PROMPT_PATH.exists():
+        sys_prompt = BOT_PROMPT_PATH.read_text(encoding="utf-8")
         log("Loaded bot system prompt length:", len(sys_prompt))
 
     report = None
@@ -201,7 +216,7 @@ def main():
         sys.exit(1)
 
     # save report locally
-    rpt_path = Path("reports") / f"report_{int(time.time())}.json"
+    rpt_path = REPORTS_DIR / f"report_{int(time.time())}.json"
     rpt_path.write_text(json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8")
     log("Saved report:", rpt_path)
 
