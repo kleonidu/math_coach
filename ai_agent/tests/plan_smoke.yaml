@@ -1,0 +1,6 @@
+name: smoke-test
+steps:
+  - user: "Привет! Расскажи, что ты умеешь"
+    expect_regex: "Ответ на"
+  - user: "Можешь показать пример?"
+    expect_regex: "stub reply"
