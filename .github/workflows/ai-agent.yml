@@ -41,10 +41,11 @@ jobs:
         with:
           python-version: '3.11'
 
+      # ✅ ставим aider как модуль и будем вызывать через `python -m`
       - name: Install Aider (stable)
         run: |
           python -m pip install --upgrade pip wheel setuptools
-          pip install "aider-chat==0.60.1"
+          python -m pip install "aider-chat==0.60.1" openai
 
       - name: Git identity
         run: |
@@ -90,13 +91,19 @@ jobs:
             exit 1
           fi
 
+          # нормализуем датированное имя модели из UI на короткое
+          if [[ "$MODEL" == gpt-4o-mini-* ]]; then
+            MODEL="gpt-4o-mini"
+          fi
+
           echo "🎯 Модель: $MODEL"
           echo "📝 Файлы:  $FILES"
           echo "---- PROMPT (first 40 lines) ----"
           sed -n '1,40p' prompt.txt || true
           echo "---------------------------------"
 
-          aider --yes --model "$MODEL" -m "$(cat prompt.txt)" $FILES
+          # вызываем aider как модуль Python (не зависит от PATH)
+          python -m aider --yes --model "$MODEL" -m "$(cat prompt.txt)" $FILES
 
       - name: Commit and Push
         run: |
