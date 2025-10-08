@@ -674,4 +674,4 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             
             session.state = SessionState.COMPLETED
             
-            await update.message.reply_text(result_text, reply_
+            await update.message.reply_text(result_text, reply_markup=reply_markup)
