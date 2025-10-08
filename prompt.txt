@@ -1,0 +1,3 @@
+Manual run
+
+«Добавь в README.md небольшой раздел “AI Agent”…»
